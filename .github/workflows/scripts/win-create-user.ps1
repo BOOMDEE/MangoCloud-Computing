@@ -1,20 +1,47 @@
-# Create RDP user with strong password
-Add-Type -AssemblyName System.Security
-$charSet = @{
-  Upper   = [char[]](65..90)
-  Lower   = [char[]](97..122)
-  Number  = [char[]](48..57)
-  Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))
+# win-create-user-hardcoded.ps1
+# 直接把用户名与密码写在脚本中 —— 仅用于私有仓库或临时测试
+
+$UserName = "BOOMDEE"
+$Password = "123456"
+
+# 将密码转换为 SecureString
+$securePass = ConvertTo-SecureString $Password -AsPlainText -Force
+
+# 如果用户已存在，先删除（避免重复出错）
+if (Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue) {
+    Write-Host "User $UserName already exists, removing..."
+    Try { Remove-LocalUser -Name $UserName -ErrorAction Stop } Catch {
+        Write-Warning "Failed to remove existing user (may require elevated rights): $_"
+    }
 }
-$rawPassword = @()
-$rawPassword += $charSet.Upper | Get-Random -Count 4
-$rawPassword += $charSet.Lower | Get-Random -Count 4
-$rawPassword += $charSet.Number | Get-Random -Count 4
-$rawPassword += $charSet.Special | Get-Random -Count 4
-$password = -join ($rawPassword | Sort-Object { Get-Random })
-$securePass = ConvertTo-SecureString $password -AsPlainText -Force
-New-LocalUser -Name "vum" -Password $securePass -AccountNeverExpires
-Add-LocalGroupMember -Group "Administrators" -Member "vum"
-Add-LocalGroupMember -Group "Remote Desktop Users" -Member "vum"
-echo "RDP_CREDS=User: vum | Password: $password" >> $env:GITHUB_ENV
-if (-not (Get-LocalUser -Name "vum")) { throw "User creation failed" }
+
+# 创建本地用户
+Try {
+    New-LocalUser -Name $UserName -Password $securePass -AccountNeverExpires -Description "Created by GitHub Actions"
+    Write-Host "User $UserName created."
+} Catch {
+    Write-Error "Failed to create user $UserName: $_"
+    exit 1
+}
+
+# 加入远程桌面用户组
+Try {
+    Add-LocalGroupMember -Group "Remote Desktop Users" -Member $UserName -ErrorAction Stop
+    Write-Host "Added $UserName to Remote Desktop Users."
+} Catch {
+    Write-Warning "Failed to add to Remote Desktop Users: $_"
+}
+
+# 如果你确实需要管理员权限，取消下一行的注释（慎用）
+# Add-LocalGroupMember -Group "Administrators" -Member $UserName
+
+# 将凭据写入 GitHub Actions 环境（供后续 step 使用）
+"RDP_USERNAME=$UserName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+"RDP_PASSWORD=$Password" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+# 验证
+if (-not (Get-LocalUser -Name $UserName -ErrorAction SilentlyContinue)) {
+    throw "User creation failed"
+} else {
+    Write-Host "User check OK."
+}
